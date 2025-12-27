@@ -5,8 +5,7 @@ A lightweight audio player for Linux built in C. Tomu focuses on efficient memor
 ## Features
 
 - **Lightweight**: Minimal dependencies and low memory footprint
-- **Quality Audio**: quality is top then commoin
-- **Efficient**: Multi-threaded architecture with lock-free circular buffering
+- **Quality Audio**: use same quality audio if possible then standard
 - **Format Support**: Plays any audio format supported by FFmpeg (MP3, FLAC, WAV, OGG, AAC, etc.)
 - **Simple**: Command-line interface - just point and play
 
@@ -86,19 +85,19 @@ Tomu uses a sophisticated multi-threaded architecture for smooth audio playback:
            ▼
     ┌──────────────────┐
     │ Sample Converter │ ◄── Format Conversion
-    │ (libswresample)  │     (Planar → Interleaved)
+    │ (libswresample)  │     (Planar → Interleaved) if planar
     └──────┬───────────┘
            │
            ▼
-    ┌──────────────────────────────┐
-    │   Circular Audio Buffer     │ ◄── Thread-Safe
-    │                             │     Ring Buffer
-    │  [====WRITE==><==READ===]   │     (2 seconds capacity)
-    │                             │
-    │  • Mutex-protected          │
-    │  • Condition variables      │
-    │  • Auto-wrapping            │
-    └──────┬───────────────────────┘
+    ┌────────────────────────────────┐
+    │   Circular Audio Buffer         │ ◄── Thread-Safe
+    │                                 │     Ring Buffer
+    │  [====WRITE==><==READ===]       │     (2 seconds capacity)
+    │                                 │
+    │  • Mutex-protected              │
+    │  • Condition variables          │
+    │  • Auto-wrapping to end samples │
+    └──────┬───────────────────────────┘
            │
            ▼
     ┌──────────────────┐
@@ -109,7 +108,7 @@ Tomu uses a sophisticated multi-threaded architecture for smooth audio playback:
            ▼
     ┌──────────────────┐
     │  Audio Hardware  │
-    │   (Speakers/DAC) │
+    │   (Speakers)     │
     └──────────────────┘
 ```
 
