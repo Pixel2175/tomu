@@ -46,6 +46,7 @@ make install
 uninstall binary
 ```bash
 make uninstall
+```
 
 ## Usage
 
