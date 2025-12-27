@@ -5,7 +5,7 @@ A lightweight audio player for Linux built in C. Tomu focuses on efficient memor
 ## Features
 
 - **Lightweight**: Minimal dependencies and low memory footprint
-- **Quality Audio**: use same quality audio if possible then standard
+- **Quality Audio**: use same quality audio if possible or use standard (for compatliblity)
 - **Format Support**: Plays any audio format supported by FFmpeg (MP3, FLAC, WAV, OGG, AAC, etc.)
 - **Simple**: Command-line interface - just point and play
 
