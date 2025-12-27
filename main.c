@@ -329,6 +329,7 @@ int start_check(const char *filename){
   streamCTX.codecCTX = codecCTX;
   streamCTX.inf = &inf;
 
+  printf("Playing file: %s\n", filename);
   printf("%dHz, ch %d, format %s\n", inf.sample_rate, inf.channels, av_get_sample_fmt_name(inf.sample_fmt));
 
   if (inf.channels > 2 ){
