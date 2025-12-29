@@ -6,16 +6,19 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <unistd.h>
-
-#if LIBSWRESAMPLE_VERSION_MAJOR <= 3
-#define LEGACY_LIBRESAMPLE
-#endif
+#include <dirent.h>
+#include <time.h>
 
 #define MINIAUDIO_IMPLEMENTATION
 #include "libs/miniaudio.h"
 
-#define PROG_VER "0.0.1"
+#if LIBSWRESAMPLE_VERSION_MAJOR <= 3
+  #define LEGACY_LIBRESAMPLE
+#endif
+
+#define PROG_VER "0.0.2"
 
 typedef struct {
   int audioStream;
@@ -51,6 +54,17 @@ typedef struct {
 
 } StreamContext;
 
+void help(){
+  printf(
+    "Usage: tomu [COMMAND] [PATH]\n"
+    " Commands:\n"
+
+    "   loop            : loop same sound\n"
+    "   shuffle-loop    : select random file audio and loop\n"
+    "   version         : show version of program\n"
+    "   help            : show help message\n"
+  );
+}
 
 void clean_free(AVFormatContext *fmtCTX, AVCodecContext *codecCTX){
   if (codecCTX ) avcodec_free_context(&codecCTX);
@@ -146,17 +160,20 @@ void *decoder_place(void *arg){
   SwrContext *swrCTX = NULL;
   AudioInfo *inf = streamCTX->inf;
 
-#ifdef LEGACY_LIBRESAMPLE
-  swrCTX = swr_alloc_set_opts(swrCTX,
-    inf->channel_layout, inf->sample_fmt, inf->sample_rate,
-    codecCTX->channel_layout, codecCTX->sample_fmt, codecCTX->sample_rate,
-    0, NULL
-  );
-#else
-  swr_alloc_set_opts2(&swrCTX, &codecCTX->ch_layout, inf->sample_fmt,
-                      inf->sample_rate, &codecCTX->ch_layout,
-                      codecCTX->sample_fmt, codecCTX->sample_rate, 0, NULL);
-#endif
+  #ifdef LEGACY_LIBRESAMPLE
+    swrCTX = swr_alloc_set_opts(swrCTX,
+      inf->channel_layout, inf->sample_fmt, inf->sample_rate,
+      codecCTX->channel_layout, codecCTX->sample_fmt, codecCTX->sample_rate,
+      0, NULL
+    );
+  #else
+    swrCTX = swr_alloc_set_opts2(&swrCTX,
+      &codecCTX->ch_layout, inf->sample_fmt, inf->sample_rate, 
+      &codecCTX->ch_layout, codecCTX->sample_fmt, codecCTX->sample_rate, 
+      0, NULL
+    );
+  #endif
+
   if (!swrCTX || swr_init(swrCTX) < 0 ){
     swr_free(&swrCTX);
   }
@@ -213,7 +230,7 @@ void ma_callback(ma_device *device, void *output, const void *input, ma_uint32 f
 
 void stream_play(StreamContext *streamCTX){
   AudioInfo *inf = streamCTX->inf;
-  int capacity = (inf->sample_rate) * (inf->channels) * (inf->sample_fmt_bytes) * 2;
+  int capacity = (inf->sample_rate) * (inf->channels) * (inf->sample_fmt_bytes) * 1;
   streamCTX->buf = audio_buffer_create(capacity);
 
   ma_device_config miniaudio_config = ma_device_config_init(ma_device_type_playback);
@@ -233,10 +250,9 @@ void stream_play(StreamContext *streamCTX){
   pthread_create(&streamCTX->decoder, NULL, decoder_place, streamCTX);
   ma_device_start(&device);
   pthread_join(streamCTX->decoder, NULL);
-  sleep(2);
+  sleep(1);
   ma_device_uninit(&device);
   audio_buffer_destroy(streamCTX->buf);
-  printf("finsh!\n");
   return;
 }
 
@@ -315,11 +331,13 @@ int start_check(const char *filename){
   }
 
   inf.audioStream = audioStream;
-#ifdef LEGACY_LIBRESAMPLE
-  inf.channels = codecCTX->channels;
-#else
-  inf.channels = codecCTX->ch_layout.nb_channels;
-#endif
+
+  #ifdef LEGACY_LIBRESAMPLE
+    inf.channels = codecCTX->channels;
+  #else
+    inf.channels = codecCTX->ch_layout.nb_channels;
+  #endif
+
   inf.sample_rate = codecCTX->sample_rate;
   inf.sample_fmt = output_sample_fmt;
   inf.sample_fmt_bytes = av_get_bytes_per_sample(inf.sample_fmt);
@@ -349,6 +367,44 @@ int start_check(const char *filename){
   return 0;
 }
 
+
+void shuffle_now(const char *path){
+  srand(time(NULL));
+  struct dirent *entry;
+
+  DIR *dir = opendir(path);
+  if (!dir){
+    perror("dir");
+  }
+
+  int count = 0;
+  while ((entry = readdir(dir)) != NULL){
+    if (strcmp(".", entry->d_name) == 0 || strcmp("..", entry->d_name) == 0) continue;
+
+
+    count++;
+  }
+
+  int index_rand = rand() % count;
+  rewinddir(dir);
+
+  for (int i = 0; i <= index_rand;){
+    entry = readdir(dir);
+    if (strcmp(".", entry->d_name) == 0 || strcmp("..", entry->d_name) == 0) continue;
+
+
+    if (i == index_rand){
+      char filename[259];
+      snprintf(filename, sizeof(filename), "%s/%s", path, entry->d_name);
+      start_check(filename);
+      exit(0);
+    }
+    i++;
+  }
+  printf("something happend\n");
+}
+
+
 int main(int argc, char *argv[]){
   if (argc < 2 ){
     printf("Usage: %s [FILE]\n", argv[0]);
@@ -362,8 +418,17 @@ int main(int argc, char *argv[]){
     while (1){
       start_check(filename);
     }
-  } else if (strcmp("--version", command) == 0 ){
+  } else if (strcmp("shuffle-loop", command) == 0){
+    while (1){
+      shuffle_now(filename);
+    }
+
+  } else if (strcmp("version", command) == 0 ){
     printf("%s\n", PROG_VER);
+
+  } else if (strcmp("help", command) == 0){
+    help();
+
   } else{
     start_check(filename);
   }
