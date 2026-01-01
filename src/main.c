@@ -2,12 +2,13 @@
 #include "control_playback.h"
 #include <stdio.h>
 #include <string.h>
+#include <libgen.h>
 
 #define PROG_VER "0.0.3"
 
 int main(int argc, char *argv[]){
   if (argc < 2 ){
-    printf("Usage: %s [FILE]\n", argv[0]);
+    printf("Usage: %s [FILE]\n", basename((argv[0])));
     return 0;
   }
 

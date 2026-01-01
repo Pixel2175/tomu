@@ -9,7 +9,7 @@
 
 stdenv.mkDerivation rec {
   pname = "tomu";
-  version = "unstable-2025-12-30";
+  version = "unstable-2026-00-01";
 
   dontFixup = true;
 
