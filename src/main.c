@@ -1,10 +1,11 @@
 #include "backend.h"
-#include "control_playback.h"
+#include "control.h"
+#include "other.h"
 #include <stdio.h>
 #include <string.h>
 #include <libgen.h>
 
-#define PROG_VER "0.0.3"
+#define PROG_VER "0.0.4"
 
 int main(int argc, char *argv[]){
   if (argc < 2 ){
@@ -19,15 +20,17 @@ int main(int argc, char *argv[]){
     while (1){
       scan_now(filename);
     }
+
   } else if (strcmp("shuffle-loop", command) == 0){
     while (1){
       shuffle(filename);
     }
-  } else if (strcmp("version", command) == 0 ){
-    printf("%s\n", PROG_VER);
 
   } else if (strcmp("help", command) == 0){
     help();
+
+  } else if (strcmp("version", command) == 0 ){
+    printf("%s\n", PROG_VER);
 
   } else{
     scan_now(filename);

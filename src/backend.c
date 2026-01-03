@@ -1,8 +1,8 @@
 #include "backend.h"
+#include "control.h"
+#include "other.h"
 #include <libavcodec/avcodec.h>
-#include <libavcodec/packet.h>
 #include <libavformat/avformat.h>
-#include <libavutil/frame.h>
 #include <libswresample/swresample.h>
 #include <libavutil/avutil.h>
 #include <libswresample/version.h>
@@ -18,54 +18,6 @@
 #if LIBSWRESAMPLE_VERSION_MAJOR <= 3 
   #define LEGACY_LIBSWRSAMPLE
 #endif
-
-typedef struct {
-  uint8_t *PCM_data;
-  int capacity;
-  int write_postion;
-  int read_postion;
-  int size;
-  pthread_mutex_t lock;
-  pthread_cond_t data_avaliable;
-  pthread_cond_t space_avaliable;
-
-} AudioBuffer;
-
-typedef struct {
-  int audioStream;
-  int ch;
-  #ifdef LEGACY_LIBSWRSAMPLE
-    int ch_layout;
-  #else
-    AVChannelLayout ch_layout;
-  #endif
-  int sample_rate;
-  enum AVSampleFormat sample_fmt;
-  int sample_fmt_bytes;
-  ma_format ma_fmt;
-
-} AudioInfo;
-
-typedef struct {
-  AudioBuffer *buf;
-  AudioInfo *inf;
-  AVFormatContext *fmtCTX;
-  AVCodecContext *codecCTX;
-
-} StreamContext;
-
-void cleanUP(AVFormatContext *fmtCTX, AVCodecContext *codecCTX){
-  if (fmtCTX ) avformat_close_input(&fmtCTX);
-  if (codecCTX ) avcodec_free_context(&codecCTX);
-}
-
-int shinu_now(const char *msg, AVFormatContext *fmtCTX, AVCodecContext *codecCTX){
-  fprintf(stderr, "F: %s\n", msg);
-
-  cleanUP(fmtCTX, codecCTX);
-
-  return 1;
-}
 
 enum AVSampleFormat get_interleaved(enum AVSampleFormat value){
   switch (value){
@@ -167,6 +119,7 @@ void *decoder_place(void *arg){
   AVCodecContext * codecCTX = streamCTX->codecCTX;
   SwrContext *swrCTX = NULL;
   AudioInfo *inf = streamCTX->inf;
+  PlayBackState *state = streamCTX->state;
 
   #ifdef LEGACY_LIBSWRSAMPLE
     swrCTX = swr_alloc_set_opts(swrCTX,
@@ -195,8 +148,9 @@ void *decoder_place(void *arg){
     return NULL;
   }
 
-  // int64_t total_samples_played = 0;
-  // double duration_sec = fmtCTX->duration / 1000000.0; // seconds
+  int64_t total_samples_played = 0;
+  int duration_time = fmtCTX->duration / 1000000.0;
+
 
   while (av_read_frame(fmtCTX, packet) >= 0){
     if (packet->stream_index == inf->audioStream){
@@ -205,6 +159,14 @@ void *decoder_place(void *arg){
       }
 
       while (avcodec_receive_frame(codecCTX, frame) >= 0){
+        double current_time = (double)total_samples_played / inf->sample_rate;
+        printf("\r  %d:%02d:%02d / %d:%02d:%02d",
+          get_hour(current_time), get_min(current_time), get_sec(current_time), 
+          get_hour(duration_time), get_min(duration_time), get_sec(duration_time)
+        );
+        fflush(stdout);
+        total_samples_played += frame->nb_samples;
+
         if (swrCTX ){
           uint8_t *data_conv = malloc(frame->nb_samples * inf->ch * inf->sample_fmt_bytes);
           uint8_t *data[1] = {data_conv};
@@ -223,20 +185,21 @@ void *decoder_place(void *arg){
           int bytes = frame->nb_samples * inf->ch * inf->sample_fmt_bytes;
           audio_buffer_write(streamCTX->buf, *frame->data, bytes);
         }
-
-        // double current_time_sec = (double)total_samples_played / inf->sample_rate;
-        //
-        // printf("\r%02d:%02d / %02d:%02d", 
-        //        (int)current_time_sec / 60, (int)current_time_sec % 60,
-        //        (int)duration_sec / 60, (int)duration_sec % 60);
-        // fflush(stdout);
-        // total_samples_played += frame->nb_samples;
-
         av_frame_unref(frame);
       }
     }
     av_packet_unref(packet);
+
+    pthread_mutex_lock(&state->lock);
+    while (state->paused){
+      pthread_cond_wait(&state->waitKudasai, &state->lock);
+    }
+    pthread_mutex_unlock(&state->lock);
+
+    if (!state->running) break;
   }
+
+  playback_stop(state);
 
   if (swrCTX ) swr_free(&swrCTX);
   av_frame_free(&frame);
@@ -252,9 +215,11 @@ void ma_dataCallback(ma_device *ma_config, void *output, const void *input, ma_u
   audio_buffer_read(streamCTX->buf, output, bytes);
 }
 
-void stream_play(StreamContext *streamCTX){
+void stream_audio(StreamContext *streamCTX){
+  pthread_t control_thread;
   pthread_t decoder_thread;
   AudioInfo *inf = streamCTX->inf;
+  PlayBackState *state = streamCTX->state;
 
   int capacity = (inf->sample_rate) * (inf->ch) * (inf->sample_fmt_bytes) * 0.5;
   streamCTX->buf = audio_buffer_crate(capacity);
@@ -270,15 +235,27 @@ void stream_play(StreamContext *streamCTX){
 
   if (ma_device_init(NULL, &ma_config, &device) != MA_SUCCESS ){
     audio_buffer_destroy(streamCTX->buf);
+    pthread_mutex_destroy(&state->lock);
+    pthread_cond_destroy(&state->waitKudasai);
     return;
   }
 
+  pthread_create(&control_thread, NULL, control_place, streamCTX->state);
   pthread_create(&decoder_thread, NULL, decoder_place, streamCTX);
   ma_device_start(&device);
+
   pthread_join(decoder_thread, NULL);
-  usleep(30000);
-  audio_buffer_destroy(streamCTX->buf);
+  // playback_stop(state);
+  // usleep(50000);
+  usleep(100000); // 100ms
   ma_device_uninit(&device);
+
+  pthread_join(control_thread, NULL);
+  // usleep(30000);
+
+  audio_buffer_destroy(streamCTX->buf);
+  pthread_mutex_destroy(&state->lock);
+  pthread_cond_destroy(&state->waitKudasai);
   return;
 }
 
@@ -318,6 +295,8 @@ int scan_now(const char *filename){
     return shinu_now("can't allocate codec!", fmtCTX, NULL);
   }
 
+  // Set Opus-specific options to handle discontinuities better
+
   avcodec_parameters_to_context(codecCTX, codecPAR);
 
   if (avcodec_open2(codecCTX, codecID, NULL) < 0){
@@ -331,7 +310,12 @@ int scan_now(const char *filename){
     output_sample_fmt = get_interleaved(input_sample_fmt);
   }
 
-  inf.audioStream = audioStream;
+  PlayBackState state = {
+    .running = 1,
+    .paused = 0
+  };
+  pthread_mutex_init(&state.lock, NULL);
+  pthread_cond_init(&state.waitKudasai, NULL);
 
   #ifdef LEGACY_LIBSWRSAMPLE
     inf.ch = codecCTX->channels;
@@ -341,6 +325,7 @@ int scan_now(const char *filename){
     inf.ch_layout = codecCTX->ch_layout;
   #endif
 
+  inf.audioStream = audioStream;
   inf.sample_rate = codecCTX->sample_rate;
   inf.sample_fmt = output_sample_fmt;
   inf.sample_fmt_bytes = av_get_bytes_per_sample(inf.sample_fmt);
@@ -349,11 +334,12 @@ int scan_now(const char *filename){
   streamCTX.inf = &inf;
   streamCTX.fmtCTX = fmtCTX;
   streamCTX.codecCTX = codecCTX;
+  streamCTX.state = &state;
 
   printf("Playing: %s\n", filename);
-  printf("%dHz, %dch, %s\n", inf.sample_rate, inf.ch, av_get_sample_fmt_name(inf.sample_fmt));
+  printf("%dHz, %dch, %s", inf.sample_rate, inf.ch, av_get_sample_fmt_name(inf.sample_fmt));
 
-  stream_play(&streamCTX);
+  stream_audio(&streamCTX);
 
   cleanUP(fmtCTX, codecCTX);
   return 0;
